@@ -1,0 +1,68 @@
+name: Update Flakes
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH_NAME: update/update-flake-lock-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+      - name: Update flakes
+        run: |
+            nix flake update
+      - name: Commit changes on update branch
+        id: commit
+        run: |
+          # Set git user for the commit
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Create and switch to a new branch
+          git switch -c "$BRANCH_NAME"
+
+          # Stage the updated flake.lock file
+          git add flake.lock
+
+          # Check if there are any changes to commit
+          echo "has_changes=false" >> "$GITHUB_OUTPUT" #initialize output
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            # Set output to indicate no changes
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            echo "Changes detected, committing..."
+            # Commit the changes
+            git commit -m "chore: update flake.lock ($(date -Iseconds))"
+            # Set output to indicate there are changes
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test
+        run: |
+          nix develop --command bash -c "make"
+      - name: Merge and push changes
+        if: success() && steps.commit.outputs.has_changes == 'true'
+        run: |
+          git switch main
+          git  merge --no-ff "$BRANCH_NAME" -m "update: merge updated flake.lock ($(date -Iseconds))"
+          git push origin main
+      - name: Clean up branch
+        if: always()
+        run: |
+          git switch main || true
+          git branch -D "$BRANCH_NAME" || true

@@ -1,2 +1,5 @@
 # Nix
 /.direnv
+
+# C
+/src/a.out
